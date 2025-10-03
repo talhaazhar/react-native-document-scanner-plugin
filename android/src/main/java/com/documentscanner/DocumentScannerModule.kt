@@ -3,6 +3,8 @@ package com.documentscanner
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.net.Uri
 import android.util.Base64
 import androidx.activity.result.ActivityResultLauncher
@@ -23,7 +25,9 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.Page
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileNotFoundException
+import java.io.FileOutputStream
 import java.util.Objects
 
 @ReactModule(name = DocumentScannerModule.NAME)
@@ -45,6 +49,58 @@ class DocumentScannerModule(reactContext: ReactApplicationContext) :
     return Base64.encodeToString(byteArray, Base64.DEFAULT)
   }
 
+  @Throws(FileNotFoundException::class)
+  fun getImageInBase64WithPadding(currentActivity: Activity, croppedImageUri: Uri, quality: Int, paddingRatio: Int): String {
+    val originalBitmap = BitmapFactory.decodeStream(
+      currentActivity.contentResolver.openInputStream(croppedImageUri)
+    )
+    val paddedBitmap = addPaddingToBitmap(originalBitmap, paddingRatio)
+    val byteArrayOutputStream = ByteArrayOutputStream()
+    paddedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, byteArrayOutputStream)
+    val byteArray = byteArrayOutputStream.toByteArray()
+    return Base64.encodeToString(byteArray, Base64.DEFAULT)
+  }
+
+  fun addPaddingToBitmap(originalBitmap: Bitmap, paddingRatio: Int): Bitmap {
+    // Calculate padding based on ratio (1-10)
+    // Ratio 1 = 2% padding, Ratio 10 = 20% padding
+    val paddingPercentage = (paddingRatio * 2).coerceIn(2, 20) / 100.0
+    val paddingX = (originalBitmap.width * paddingPercentage).toInt()
+    val paddingY = (originalBitmap.height * paddingPercentage).toInt()
+    
+    // Create new bitmap with padding
+    val newWidth = originalBitmap.width + (paddingX * 2)
+    val newHeight = originalBitmap.height + (paddingY * 2)
+    val paddedBitmap = Bitmap.createBitmap(newWidth, newHeight, Bitmap.Config.ARGB_8888)
+    
+    // Fill with white background
+    val canvas = Canvas(paddedBitmap)
+    canvas.drawColor(Color.WHITE)
+    
+    // Draw original bitmap centered with padding
+    canvas.drawBitmap(originalBitmap, paddingX.toFloat(), paddingY.toFloat(), null)
+    
+    return paddedBitmap
+  }
+
+  @Throws(FileNotFoundException::class)
+  fun createPaddedImageFile(currentActivity: Activity, croppedImageUri: Uri, quality: Int, paddingRatio: Int): String {
+    val originalBitmap = BitmapFactory.decodeStream(
+      currentActivity.contentResolver.openInputStream(croppedImageUri)
+    )
+    val paddedBitmap = addPaddingToBitmap(originalBitmap, paddingRatio)
+    
+    // Create a temporary file for the padded image
+    val cacheDir = currentActivity.cacheDir
+    val paddedImageFile = File(cacheDir, "padded_document_${System.currentTimeMillis()}.jpg")
+    
+    val fileOutputStream = FileOutputStream(paddedImageFile)
+    paddedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, fileOutputStream)
+    fileOutputStream.close()
+    
+    return paddedImageFile.absolutePath
+  }
+
   override fun scanDocument(options: ReadableMap, promise: Promise) {
     val currentActivity = reactApplicationContext.getCurrentActivity()
     val response: WritableMap = WritableNativeMap()
@@ -63,6 +119,12 @@ class DocumentScannerModule(reactContext: ReactApplicationContext) :
       options.getInt("croppedImageQuality")
     } else {
       100
+    }
+
+    val paddingRatio: Int? = if (options.hasKey("paddingRatio")) {
+      options.getInt("paddingRatio").coerceIn(1, 10)
+    } else {
+      null
     }
 
     val scanner: GmsDocumentScanner =
@@ -86,17 +148,26 @@ class DocumentScannerModule(reactContext: ReactApplicationContext) :
                   val croppedImageUri: Uri = page.imageUri
                   var croppedImageResults: String? = croppedImageUri.toString()
 
-                  if (options.hasKey("responseType") && Objects.equals(
-                      options.getString("responseType"),
-                      "base64"
-                    )
-                  ) {
-                    try {
-                      croppedImageResults =
+                  try {
+                    if (options.hasKey("responseType") && Objects.equals(
+                        options.getString("responseType"),
+                        "base64"
+                      )
+                    ) {
+                      // Base64 response with optional padding
+                      croppedImageResults = if (paddingRatio != null) {
+                        this.getImageInBase64WithPadding(currentActivity, croppedImageUri, croppedImageQuality, paddingRatio)
+                      } else {
                         this.getImageInBase64(currentActivity, croppedImageUri, croppedImageQuality)
-                    } catch (error: FileNotFoundException) {
-                      promise.reject("document scan error", error.message)
+                      }
+                    } else if (paddingRatio != null) {
+                      // File path response with padding - create padded file
+                      croppedImageResults = this.createPaddedImageFile(currentActivity, croppedImageUri, croppedImageQuality, paddingRatio)
                     }
+                    // If no padding and file path response, use original URI string (default behavior)
+                  } catch (error: FileNotFoundException) {
+                    promise.reject("document scan error", error.message)
+                    return@register
                   }
 
                   docScanResults.pushString(croppedImageResults)

@@ -23,6 +23,14 @@ export interface ScanDocumentOptions {
    * @default: ResponseType.ImageFilePath
    */
   responseType?: ResponseType;
+
+  /**
+   * Android only: Padding ratio for RDC (Remote Deposit Capture) use cases.
+   * Value between 1-10 where 1 adds minimal padding and 10 adds maximum padding.
+   * This adds padding around the cropped document image.
+   * @default: undefined (no padding applied)
+   */
+  paddingRatio?: number;
 }
 
 export enum ResponseType {
