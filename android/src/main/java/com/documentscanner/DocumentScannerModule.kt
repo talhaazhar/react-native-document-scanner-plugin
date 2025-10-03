@@ -75,7 +75,7 @@ class DocumentScannerModule(reactContext: ReactApplicationContext) :
     
     // Fill with white background
     val canvas = Canvas(paddedBitmap)
-    canvas.drawColor(Color.WHITE)
+    canvas.drawColor(Color.BLACK)
     
     // Draw original bitmap centered with padding
     canvas.drawBitmap(originalBitmap, paddingX.toFloat(), paddingY.toFloat(), null)
